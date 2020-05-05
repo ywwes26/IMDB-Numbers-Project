@@ -8,22 +8,304 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r library,echo=FALSE}
+library(rvest)
+library(tidyverse)
+library(tidytext)
+library(wordcloud)
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+## Wraging Movie Data
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+
+### Abstract
+The data sets I use are about movies information in the past few years, containing the title, year, rating, gross, etc. The data comes from two resources, the first one is from the rating website IMDB <https://www.imdb.com/search/title/?title_type=feature&release_date=2010-01-01,2020-12-31&sort=num_votes,desc>, the second one is the budget, domestic and worldwide gross data of the famous movies from the Numbers, <https://www.the-numbers.com/movie/budgets/all>. I cleaned the data to a format which I can easily deal with, to generate some informative tables and figures, through which we can analyze some aspects of the movies. The interesting part of this project is that the two data sources need scraping and the website has multiple pages, and we need to design a way to scrape all the data and merge them together. Through some analysis methods I learned in this course, I found that the IMDB tends to give high ratings to action movies and adventure movies, and I figure out some useful relationships between the variables, for example, short but high rated movies tend to success in gross. I also figure out some famous directors and actors, as well as the frequent words in movies' description, etc.
+
+### 1. Collecting data
+I collect only the first 500 of IMDB and all from the Numbers.
+The main problem is how to scrape multiple pages. By looking at the url of the two websites carefully, we can find that there are choices to set the starting index and we can scrape the data piece by piece and then merge the data to a large data frame. The IMDB website url gives the choice after the string "start=", and the Numbers after string "all/".
+There is a userful tool called Selector Gadget, I use it to determine the nodes I need to focus on.
+There is a problem actually, the Numbers website has the mechanism for anti-scraping, and my program shut down after a while, so I have to manually copy all the data from the website and asve them as a txt file. Then I open it in R. I will paste my code for scraping here and the data I saved will be shown in my Github Repository.
+```{r scrape}
+# the Numbers
+# url_numbers <- 'https://www.the-numbers.com/movie/budgets/all/'
+
+# blocked by anti-scrapying mechanism
+# index <- seq(1, 6001, 100)
+# 
+# numbers <- NULL
+# for (i in index) {
+#   url <- paste0(url_numbers, toString(i))
+#   numbers_temp <- url_numbers %>%
+#     read_html() %>%
+#     html_nodes('table') %>%
+#     html_table(fill = TRUE) %>%
+#     .[[1]]
+#   numbers <- rbind(numbers, numbers_temp)
+# }
+# 
+# write.csv(numbers, file = '', row.names = FALSE)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r collecting, echo=FALSE, warning=FALSE}
+url_imdb <- 'https://www.imdb.com/search/title/?title_type=feature&release_date=2010-01-01,2020-12-31&sort=num_votes,desc&start='
+
+# extract the data with multiple pages
+# the indices are start pages, 50 items ahead
+index <- seq(1, 451, by = 50)
+# used to deal with untidy years
+even <- seq(2,100,2)
+imdb <- NULL
+for (i in index) {
+  url <- paste0(url_imdb, toString(i))
+  rank <- url %>%
+    read_html() %>%
+    html_nodes('.text-primary') %>%
+    html_text()
+  title <- url %>%
+    read_html() %>%
+    html_nodes('.lister-item-header a') %>%
+    html_text()
+  rating <- url %>%
+    read_html() %>%
+    html_nodes('.ratings-imdb-rating strong') %>%
+    html_text()
+  # year associated with rank, need cleaning
+  year_untidy <- url %>%
+    read_html() %>%
+    html_nodes('.unbold') %>%
+    html_text()
+  year <- year_untidy[even]
+  runTime <- url %>%
+    read_html() %>%
+    html_nodes('.runtime') %>%
+    html_text()
+  genre <- url %>%
+    read_html() %>%
+    html_nodes('.genre') %>%
+    html_text()
+  votes <- url %>%
+    read_html() %>%
+    html_nodes('.sort-num_votes-visible span:nth-child(2)') %>%
+    html_text()
+  gross <- url %>%
+    read_html() %>%
+    html_nodes('.ghost~ .text-muted+ span') %>%
+    html_text()
+  staff <- url %>%
+    read_html() %>%
+    html_nodes('.text-muted+ p') %>%
+    html_text()
+  description <- url %>%
+    read_html() %>%
+    html_nodes('.ratings-bar+ .text-muted') %>%
+    html_text()
+  imdb_temp <- cbind(rank, title, rating, year, runTime, genre, votes, gross, staff, description) %>%
+    as.data.frame()
+  imdb <- rbind(imdb, imdb_temp)
+}
+```
+Here is a look at the raw data of IMDB.
+```{r imdb}
+glimpse(imdb)
+```
+
+```{r get_numbers, warning=FALSE}
+numbers <- read_tsv('D:/Desktop/numbers.txt')
+numbers <- rbind(names(numbers), numbers)
+numbers <- numbers[,-1]
+names(numbers) <- c('releaseDate', 'title', 'budget', 'domesticGross', 'worldwideGross')
+```
+
+The glimpse of the Numbers data.
+```{r numbers}
+glimpse(numbers)
+```
+
+### 2. Cleanign the data
+From the format of the raw data we can seee that there are a lot of useless symbols in the data, and some columns are united too, and we need to separate them. There are also problems like multiple genres of a movie, and multiple directors and stars too. The following solutions are adopted to get the data clean.
+1. Remove useless symbols like ",", ".", "(", "$" and so on. The function used here is the str_remove_all().
+2. Part of title is in the column year. Use extract_all() and paste0() to fix this problem.
+3. Extract the first genre and director of movies to subsititute the original data.
+4. Remove the blanks using str_trim().
+5. Transfer the unit of budget and gross.
+To illustrate the regular expressions I used better, I just put a piece of long code here, because I think this is the most informative way t show what I have done.
+```{r warning=FALSE}
+# imdb
+imdb$rank <- 1:nrow(imdb)
+imdb$title <- imdb$title %>% as.character()
+imdb$rating <- imdb$rating %>% as.character() %>% as.numeric()
+# part of the title is in the column year
+imdb$year <- imdb$year %>% as.character()
+title_index <- str_detect(imdb$year, '\\(I\\)')
+imdb$title[title_index] <- imdb$title[title_index] %>%
+  paste0(' 1')
+title_index <- str_detect(imdb$year, '\\(II\\)')
+imdb$title[title_index] <- imdb$title[title_index] %>%
+  paste0(' 2')
+title_index <- str_detect(imdb$year, '\\(IX\\)')
+imdb$title[title_index] <- imdb$title[title_index] %>%
+  paste0(' 9')
+imdb$year <- imdb$year %>% 
+  str_remove_all('\\(I\\)|\\(II\\)|\\(IX\\)|\\(|\\)') %>%
+  as.numeric()
+imdb$runTime <- imdb$runTime %>%
+  as.character() %>%
+  str_remove_all('min') %>%
+  as.numeric()
+imdb$votes <- imdb$votes %>%
+  str_remove_all(',') %>%
+  as.numeric()
+imdb$gross <- imdb$gross %>%
+  as.character() %>%
+  str_remove_all('M')
+imdb$gross <- imdb$gross %>%
+  str_sub(2,) %>% as.numeric()
+imdb$genre <- imdb$genre %>%
+  as.character() %>%
+  str_remove_all('\n') %>%
+  str_trim()
+# multiple genres, keep the first one
+imdb$genre <- gsub(',.*', '', imdb$genre)
+# separate the staff to director and stars
+imdb$staff <- imdb$staff %>% 
+  str_replace_all('\n','') %>% 
+  str_trim(side = 'both')
+imdb$staff <- imdb$staff %>% as.character()
+imdb$description <- imdb$description %>%
+  str_replace_all('\n', '') %>% 
+  str_trim()
+imdb <- imdb %>% separate(col = staff, into = c('director', 'stars'), sep = '\\|')
+imdb$director <- imdb$director %>%
+  str_remove_all('Director:|Directors:') %>% 
+  str_trim()
+# keep the first director
+imdb$director <- gsub(',.*','',imdb$director)
+imdb$stars <- imdb$stars %>%
+  str_remove_all('Stars:') %>% 
+  str_trim()
+# numbers
+numbers$budget <- numbers$budget %>%
+  str_remove_all(',') %>%
+  str_remove_all('\\$') %>%
+  as.numeric()
+numbers$domesticGross <- numbers$domesticGross %>%
+  str_remove_all(',') %>%
+  str_remove_all('\\$') %>%
+  as.numeric()
+numbers$worldwideGross <- numbers$worldwideGross %>%
+  str_remove_all(',') %>%
+  str_remove_all('\\$') %>%
+  as.numeric()
+# scale the unit in numbers to be consistent with imdb
+numbers[,3:5] <- numbers[,3:5]/1000000 %>% round(2)
+```
+
+The cleaned data of IMDB.
+```{r IMDB_tidy}
+glimpse(imdb)
+```
+
+The cleaned data of the Numbers.
+```{r Numbers_tidy}
+glimpse(numbers)
+```
+
+
+### 3. Analyzing
+#### a. Analysis about the genres.
+I want to find the the rating within each genre, to find out which kind of movies are more popuplar, so I create a boxplot in each genre and compare them. The surprise is that the biography has the higest rating average, not action movie.
+The plot is shown below.
+```{r rating vs genres}
+# the rating of different genres
+ggplot(data = imdb) + 
+  geom_boxplot(aes(genre, rating)) + 
+  ggtitle('Ratings of Different Genres') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The next analysis I do is that I think the votes on IMDB indicate the popularity of the movies, so I investigate the votes within each genre. There is a surprise too that the mystery movies has the highest votes.
+
+```{r votes vs genres}
+# votes indicate popularity
+ggplot(data = imdb) + 
+  geom_boxplot(aes(genre, votes)) + 
+  ggtitle('Votes for Different Genres') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### b. Analysis of the gross.
+The next variable I am going to investigate is gross, which is very important for the manufacturers. First, I want to find out how run time and rating on IMDB affects the gross of the movies. We can see that the points are gathered on the top left of the figure, which means the movies with a shorter time and high rating will earn gross. We can also find that action movies and animation are all profitable kinds of movies, and animation with a relatively shorter run time.
+
+```{r gross by run time and rating}
+ggplot(data = imdb,aes(runTime,rating)) +
+  geom_point(aes(size=gross,col=genre)) +
+  ggtitle('How Run Time and Rating affect Gross') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The second investigation about gross is that how much gross increase when we increase investment. What is interesting is that when we increase budget, the world wide gross increase much more than domestic gross. The slope is steeper.
+
+```{r gross vs budget}
+# will high investment improve the gross?
+numbers[-2300,] %>%  # remove outlier
+  gather(`domesticGross`:`worldwideGross`,key = 'region', value = gross) %>%
+  ggplot() + geom_point(aes(budget, gross, color = region)) +
+  ggtitle('Budget against Gross') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### c. Directors and actors.
+The next finding is the top actors and directors. Here I collect data of the top votes, so we can see popularity of these people.
+
+```{r director}
+# famous actors and directors
+directors <- table(imdb$director) %>% 
+  as.data.frame() %>% 
+  arrange(desc(Freq)) %>% 
+  .[1:10,]
+names(directors) <- c('Director','Number of Show-ups')
+directors
+```
+
+```{r actor}
+actor_list <- NULL
+for (i in 1:500) {
+  actor <- imdb$stars[i] %>%
+    str_split(',') %>%
+    unlist()
+  actor_list <- c(actor_list, actor)
+}
+actors <- table(actor_list) %>%
+  as.data.frame() %>%
+  arrange(desc(Freq)) %>%
+  .[1:10,]
+names(actors) <- c('Actor', 'Number of Show-ups')
+actors
+```
+
+I am also intersted in the word most frequently used in the description of the movie. So I made a word cloud of it. First I need to separate the sentences using unnest_tokens() and then remove the stop words in it. Then make the word cloud by frequency.
+
+```{r wordcloud}
+# wordcloud for description
+data('stop_words')
+descrip <- imdb %>%
+  unnest_tokens(word, description) %>%
+  anti_join(stop_words) %>%
+  count(word, sort = T)
+descrip[1:10,] %>% with(wordcloud(word,n))
+```
+ 
+ 
+The last analysis I did is to find the hottest movies over the years, with rating above 7.8 and gross above $380M. The Avengers and Star War series are the most popular movies in the past 10 years. The movies on the top right are the movies with both high rating and gross.
+
+```{r top movies}
+hot_movies <- imdb %>%
+  filter(rating >= 7.8) %>%
+  filter(gross >= 360)
+ggplot(data = imdb, aes(rating, gross, color = genre, label = title)) + geom_point() +
+  geom_text(aes(label = title), data = hot_movies, size = 3)
+```
+
