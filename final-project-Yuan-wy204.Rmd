@@ -113,7 +113,7 @@ glimpse(imdb)
 ```
 
 ```{r get_numbers, warning=FALSE}
-numbers <- read_tsv('D:/Desktop/numbers.txt')
+numbers <- read_tsv('https://raw.githubusercontent.com/ywwes26/IMDB-Numbers-Project/master/raw-data/numbers.txt')
 numbers <- rbind(names(numbers), numbers)
 numbers <- numbers[,-1]
 names(numbers) <- c('releaseDate', 'title', 'budget', 'domesticGross', 'worldwideGross')
@@ -131,8 +131,7 @@ From the format of the raw data we can seee that there are a lot of useless symb
 3. Extract the first genre and director of movies to subsititute the original data.
 4. Remove the blanks using str_trim().
 5. Transfer the unit of budget and gross.
-To illustrate the regular expressions I used better, I just put a piece of long code here, because I think this is the most informative way t show what I have done.
-```{r warning=FALSE}
+```{r warning=FALSE,echo=F}
 # imdb
 imdb$rank <- 1:nrow(imdb)
 imdb$title <- imdb$title %>% as.character()
@@ -309,3 +308,6 @@ ggplot(data = imdb, aes(rating, gross, color = genre, label = title)) + geom_poi
   geom_text(aes(label = title), data = hot_movies, size = 3)
 ```
 
+### 4. Conclusion
+
+This project helps me review what I learned in this course, and the important thing is that I improve myself by challeging more complicated web scraping and using Github to do project management. Overall, this is a nice course and I will keep learning data wrangling and enhance y skills. Here is the Github repository for this project. <https://github.com/ywwes26/IMDB-Numbers-Project>
