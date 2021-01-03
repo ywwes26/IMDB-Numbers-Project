@@ -3,7 +3,7 @@ library(tidyverse)
 library(tidytext)
 library(wordcloud)
 
-### test for update
+# test update 2
 
 #####################
 ## data collection ##
@@ -258,6 +258,3 @@ hot_movies <- imdb %>%
   filter(gross >= 360)
 ggplot(data = imdb, aes(rating, gross, color = genre, label = title)) + geom_point() +
   geom_text(aes(label = title), data = hot_movies, size = 3)
-
-
-
